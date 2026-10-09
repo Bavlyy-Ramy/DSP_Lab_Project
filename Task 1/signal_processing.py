@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import math
 
 def read_signal(filename):
     with open(filename, "r") as file:
@@ -15,7 +16,6 @@ def read_signal(filename):
         samples.append(float(value))
 
     return indices, samples
-
 
 def add_signals(*signals):
     result_dict = {}
@@ -38,7 +38,6 @@ def add_signals(*signals):
 
     return result_indices, result_samples
 
-
 def plot_signal(indices, samples, title="Signal"):
     plt.figure(figsize=(8, 5))
     plt.stem(indices, samples)
@@ -47,7 +46,6 @@ def plot_signal(indices, samples, title="Signal"):
     plt.title(title)
     plt.grid(True)
     plt.show()
-
 
 def multiply_signal(signal, constant):
     indices, samples = signal
@@ -59,13 +57,11 @@ def multiply_signal(signal, constant):
 
     return indices.copy(), result_samples
 
-
 def subtract_signals(signal1, signal2):
     negative_signal2 = multiply_signal(signal2, -1)
     result = add_signals(signal1, negative_signal2)
 
     return result
-
 
 def shift_signal(signal, shift):
     indices, samples = signal
@@ -76,7 +72,6 @@ def shift_signal(signal, shift):
         new_indices.append(index - shift)
 
     return new_indices, samples.copy()
-
 
 def fold_signal(signal):
     indices, samples = signal
@@ -96,3 +91,72 @@ def fold_signal(signal):
         new_samples.append(sample)
 
     return new_indices, new_samples
+
+def generate_sine_signal(amplitude, phase, analog_frequency,sampling_frequency, num_samples=100):
+
+    if not all(math.isfinite(v) for v in (amplitude, phase, analog_frequency, sampling_frequency)):
+        raise ValueError("All parameters must be finite numbers.")
+
+    if analog_frequency < 0:
+        raise ValueError("Analog frequency cannot be negative.")
+
+    if sampling_frequency <= 0:
+        raise ValueError("Sampling frequency must be positive.")
+
+    if sampling_frequency <= 2 * analog_frequency:
+        raise ValueError(
+            "Sampling frequency must be greater than "
+            "twice the analog frequency."
+        )
+
+    if not isinstance(num_samples, int) or isinstance(num_samples, bool) or num_samples <= 0:
+        raise ValueError("Number of samples must be a positive integer.")
+
+    indices = []
+    samples = []
+
+    for n in range(num_samples):
+        value = amplitude * math.sin(
+            2 * math.pi * analog_frequency / sampling_frequency * n
+            + phase
+        )
+
+        indices.append(n)
+        samples.append(value)
+
+    return indices, samples
+
+def generate_cosine_signal(amplitude, phase, analog_frequency,sampling_frequency, num_samples=100):
+    if not all(math.isfinite(v) for v in (
+        amplitude, phase, analog_frequency, sampling_frequency
+    )):
+        raise ValueError("All parameters must be finite numbers.")
+
+    if analog_frequency < 0:
+        raise ValueError("Analog frequency cannot be negative.")
+
+    if sampling_frequency <= 0:
+        raise ValueError("Sampling frequency must be positive.")
+
+    if sampling_frequency <= 2 * analog_frequency:
+        raise ValueError(
+            "Sampling frequency must be greater than "
+            "twice the analog frequency."
+        )
+
+    if not isinstance(num_samples, int) or isinstance(num_samples, bool) or num_samples <= 0:
+        raise ValueError("Number of samples must be a positive integer.")
+
+    indices = []
+    samples = []
+
+    for n in range(num_samples):
+        value = amplitude * math.cos(
+            2 * math.pi * analog_frequency / sampling_frequency * n
+            + phase
+        )
+
+        indices.append(n)
+        samples.append(value)
+
+    return indices, samples

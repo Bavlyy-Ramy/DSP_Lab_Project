@@ -1,4 +1,5 @@
 import tkinter as tk
+import math
 from tkinter import filedialog, messagebox, ttk
 
 import matplotlib.pyplot as plt
@@ -30,21 +31,127 @@ operations = [
 ]
 
 
+# Plot representation: "Discrete" uses stems; "Continuous-style" connects samples.
+plot_style = "Discrete"
+
+
+def generate_waveform(waveform, amplitude, phase, analog_frequency,
+                      sampling_frequency, num_samples):
+    """Generate a sampled sine or cosine wave; phase is in radians."""
+    values = (amplitude, phase, analog_frequency, sampling_frequency)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("All parameters must be finite numbers.")
+    if analog_frequency < 0:
+        raise ValueError("Analog frequency cannot be negative.")
+    if sampling_frequency <= 0:
+        raise ValueError("Sampling frequency must be positive.")
+    if sampling_frequency <= 2 * analog_frequency:
+        raise ValueError("Sampling frequency must be greater than twice the analog frequency.")
+    if num_samples <= 0:
+        raise ValueError("Number of samples must be a positive integer.")
+
+    indices = list(range(num_samples))
+    function = math.sin if waveform == "Sine" else math.cos
+    samples = [
+        amplitude * function(2 * math.pi * analog_frequency / sampling_frequency * n + phase)
+        for n in indices
+    ]
+    return indices, samples
+
+
+def open_signal_generator(waveform):
+    """Open a parameter form for generating a sine or cosine signal."""
+    dialog = tk.Toplevel(root)
+    dialog.title(f"Generate {waveform} Wave")
+    dialog.transient(root)
+    dialog.resizable(True, True)
+    dialog.configure(bg=PANEL_COLOR)
+    dialog.minsize(340, 360)
+
+    container = tk.Frame(dialog, bg=PANEL_COLOR, padx=18, pady=16)
+    container.pack(fill="both", expand=True)
+
+    tk.Label(container, text=f"{waveform} Wave Parameters",
+             font=("Arial", 14, "bold"), bg=PANEL_COLOR,
+             fg=TEXT_COLOR).grid(row=0, column=0, columnspan=2,
+                                 sticky="w", pady=(0, 12))
+
+    fields = [
+        ("Amplitude (A)", "1"),
+        ("Phase shift θ (radians)", "0"),
+        ("Analog frequency (Hz)", "5"),
+        ("Sampling frequency (Hz)", "50"),
+        ("Number of samples", "100"),
+    ]
+    entries = {}
+    for row, (label_text, default) in enumerate(fields, start=1):
+        tk.Label(container, text=label_text, font=("Segoe UI", 10),
+                 bg=PANEL_COLOR, fg=TEXT_COLOR).grid(
+                     row=row, column=0, sticky="w", padx=(0, 10), pady=6)
+        entry = tk.Entry(container, font=("Segoe UI", 10), width=16)
+        entry.insert(0, default)
+        entry.grid(row=row, column=1, sticky="ew", pady=6)
+        entries[label_text] = entry
+    container.columnconfigure(1, weight=1)
+
+    def generate():
+        try:
+            amplitude = float(entries["Amplitude (A)"].get().strip())
+            phase = float(entries["Phase shift θ (radians)"].get().strip())
+            analog_frequency = float(entries["Analog frequency (Hz)"].get().strip())
+            sampling_frequency = float(entries["Sampling frequency (Hz)"].get().strip())
+            raw_count = entries["Number of samples"].get().strip()
+            num_samples = int(raw_count)
+            if str(num_samples) != raw_count and not raw_count.isdigit():
+                raise ValueError("Number of samples must be a positive integer.")
+            indices, samples = generate_waveform(
+                waveform, amplitude, phase, analog_frequency,
+                sampling_frequency, num_samples)
+        except ValueError as exc:
+            messagebox.showerror("Invalid Parameters", str(exc), parent=dialog)
+            return
+
+        signal = (indices, samples)
+        name = f"Generated {waveform} (A={amplitude:g}, f={analog_frequency:g}Hz)"
+        loaded_signals.append(signal)
+        loaded_signal_names.append(name)
+        signals_listbox.insert(tk.END, name)
+        new_index = len(loaded_signals) - 1
+        signals_listbox.selection_clear(0, tk.END)
+        signals_listbox.selection_set(new_index)
+        signals_listbox.activate(new_index)
+        update_signal_count()
+        update_selection_count()
+        display_signal(indices, samples, name)
+        status_label.config(text=f"Generated {waveform.lower()} wave successfully.", fg=SUCCESS_COLOR)
+        dialog.destroy()
+
+    button = tk.Button(container, text="Generate Signal", command=generate,
+                       bg=PRIMARY_COLOR, fg="white", activebackground=PRIMARY_HOVER,
+                       activeforeground="white", relief="flat", cursor="hand2",
+                       font=("Arial", 10, "bold"), padx=14, pady=8)
+    button.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+    entries["Amplitude (A)"].focus_set()
+
+
 # ============================================================
 # COLORS
 # ============================================================
 
-BG_COLOR = "#F5F7FA"
+BG_COLOR = "#EEF3FA"
 PANEL_COLOR = "#FFFFFF"
-PRIMARY_COLOR = "#2563EB"
-PRIMARY_HOVER = "#1D4ED8"
-SECONDARY_COLOR = "#E5E7EB"
-TEXT_COLOR = "#1F2937"
-MUTED_COLOR = "#6B7280"
-SUCCESS_COLOR = "#15803D"
-ERROR_COLOR = "#B91C1C"
-INPUT_BG_COLOR = "#EFF6FF"
-INPUT_BORDER_COLOR = "#BFDBFE"
+PRIMARY_COLOR = "#2672F3"
+PRIMARY_HOVER = "#155ED5"
+SECONDARY_COLOR = "#E7EDF6"
+TEXT_COLOR = "#142B4D"
+MUTED_COLOR = "#64748B"
+SUCCESS_COLOR = "#07845A"
+ERROR_COLOR = "#C6283D"
+INPUT_BG_COLOR = "#F7FAFE"
+INPUT_BORDER_COLOR = "#CBD8E8"
+HEADER_COLOR = "#17365D"
+HEADER_SUBTITLE = "#C6D6EC"
+BORDER_COLOR = "#DCE5F0"
 
 
 # ============================================================
@@ -53,18 +160,29 @@ INPUT_BORDER_COLOR = "#BFDBFE"
 
 root = tk.Tk()
 
-root.title("DSP Task 1")
+root.title("DSP Signal Processing Lab")
 
 root.geometry("1200x750")
 
 root.minsize(
-    1000,
-    650
+    800,
+    520
 )
 
 root.configure(
     bg=BG_COLOR
 )
+
+
+# ============================================================
+# APPLICATION MENU
+# ============================================================
+
+signal_generation_menu = tk.Menu(root, tearoff=0, font=("Segoe UI", 11),
+                                 bg=PANEL_COLOR, fg=TEXT_COLOR,
+                                 activebackground=PRIMARY_COLOR, activeforeground="white")
+signal_generation_menu.add_command(label="〰  Sine Wave", command=lambda: open_signal_generator("Sine"))
+signal_generation_menu.add_command(label="〰  Cosine Wave", command=lambda: open_signal_generator("Cosine"))
 
 
 # ============================================================
@@ -229,24 +347,18 @@ def display_selected_signal():
 
         return
 
-    index = selected[0]
+    if len(selected) == 1:
+        index = selected[0]
+        indices, samples = loaded_signals[index]
+        signal_name = loaded_signal_names[index]
+        display_signal(indices, samples, signal_name)
+        status_text = f"Displaying: {signal_name}"
+    else:
+        selected_items = [(loaded_signal_names[i], loaded_signals[i]) for i in selected]
+        display_multiple_signals(selected_items, "Selected Signals")
+        status_text = f"Displaying {len(selected)} selected signals."
 
-    signal = loaded_signals[index]
-
-    indices, samples = signal
-
-    signal_name = loaded_signal_names[index]
-
-    display_signal(
-        indices,
-        samples,
-        signal_name
-    )
-
-    status_label.config(
-        text=f"Displaying: {signal_name}",
-        fg=SUCCESS_COLOR
-    )
+    status_label.config(text=status_text, fg=SUCCESS_COLOR)
 
 
 # ============================================================
@@ -301,9 +413,9 @@ def update_signal_count():
 
     count = len(loaded_signals)
 
-    signal_count_label.config(
-        text=f"{count} signal(s) loaded"
-    )
+    signal_count_label.config(text=f"{count} signal(s) loaded")
+    if "signal_summary_label" in globals():
+        update_signal_summary()
 
 
 # ============================================================
@@ -378,7 +490,8 @@ def operation_changed(event=None):
         constant_frame.pack(
             fill="x",
             padx=15,
-            pady=8
+            pady=8,
+            before=apply_button
         )
 
     # --------------------------------------------------------
@@ -396,7 +509,8 @@ def operation_changed(event=None):
         shift_frame.pack(
             fill="x",
             padx=15,
-            pady=8
+            pady=8,
+            before=apply_button
         )
 
     # --------------------------------------------------------
@@ -681,48 +795,50 @@ def apply_operation():
 # DISPLAY SIGNAL ON MATPLOTLIB
 # ============================================================
 
-def display_signal(
-    indices,
-    samples,
-    title="Signal"
-):
-    """
-    Display a discrete-time signal inside the GUI.
-    """
+def display_signal(indices, samples, title="Signal"):
+    """Display one signal using the currently selected plot representation."""
+    display_multiple_signals([(title, (indices, samples))], title)
 
+
+def display_multiple_signals(named_signals, title="Signals"):
+    """Display one or more signals together in the plot."""
     figure.clear()
-
     ax = figure.add_subplot(111)
 
-    ax.stem(
-        indices,
-        samples
-    )
+    for name, signal in named_signals:
+        indices, samples = signal
+        if plot_style == "Discrete":
+            markerline, stemlines, baseline = ax.stem(indices, samples, label=name)
+            try:
+                markerline.set_markersize(4)
+                stemlines.set_linewidth(1)
+            except AttributeError:
+                pass
+        else:
+            ax.plot(indices, samples, marker="o", markersize=3, linewidth=1.5, label=name)
 
-    ax.set_xlabel(
-        "n",
-        fontsize=11
-    )
-
-    ax.set_ylabel(
-        "x[n]",
-        fontsize=11
-    )
-
-    ax.set_title(
-        title,
-        fontsize=14,
-        fontweight="bold"
-    )
-
-    ax.grid(
-        True,
-        alpha=0.3
-    )
-
+    ax.set_xlabel("n", fontsize=11)
+    ax.set_ylabel("x[n]", fontsize=11)
+    ax.set_title(title, fontsize=14, fontweight="bold")
+    ax.grid(True, alpha=0.3)
+    if len(named_signals) > 1:
+        ax.legend(fontsize=8, loc="best")
     figure.tight_layout()
+    canvas.draw_idle()
 
-    canvas.draw()
+
+def plot_style_changed(event=None):
+    """Update representation and redraw the currently selected signals."""
+    global plot_style
+    plot_style = plot_style_var.get()
+    selected = signals_listbox.curselection()
+    if selected:
+        items = [(loaded_signal_names[i], loaded_signals[i]) for i in selected]
+        display_multiple_signals(items, "Selected Signals" if len(items) > 1 else items[0][0])
+        plot_description.config(text=plot_style + " representation")
+    else:
+        clear_plot()
+        plot_description.config(text=plot_style + " representation")
 
 
 # ============================================================
@@ -737,6 +853,7 @@ def clear_plot():
     figure.clear()
 
     ax = figure.add_subplot(111)
+    ax.set_facecolor("#FFFFFF")
 
     ax.set_title(
         "Signal Plot",
@@ -780,86 +897,177 @@ def on_closing():
 # HEADER
 # ============================================================
 
-header_frame = tk.Frame(
-    root,
-    bg=BG_COLOR
-)
+header_frame = tk.Frame(root, bg=HEADER_COLOR, height=86)
+header_frame.pack(fill="x")
+header_frame.pack_propagate(False)
 
-header_frame.pack(
-    fill="x",
-    padx=30,
-    pady=(20, 10)
-)
+brand_mark = tk.Label(header_frame, text="∿", font=("Segoe UI", 36, "bold"),
+                      bg=HEADER_COLOR, fg="#8AB7FF")
+brand_mark.pack(side="left", padx=(24, 14))
 
+header_text_frame = tk.Frame(header_frame, bg=HEADER_COLOR)
+header_text_frame.pack(side="left", fill="y", pady=12)
 
-title_label = tk.Label(
-    header_frame,
-    text="DSP Task 1",
-    font=("Arial", 26, "bold"),
-    bg=BG_COLOR,
-    fg=TEXT_COLOR
-)
+title_label = tk.Label(header_text_frame, text="DSP Signal Processing Lab",
+                       font=("Segoe UI", 22, "bold"), bg=HEADER_COLOR, fg="white")
+title_label.pack(anchor="w")
 
-title_label.pack(
-    anchor="w"
-)
+subtitle_label = tk.Label(header_text_frame,
+                          text="Load, generate and process discrete-time signals",
+                          font=("Segoe UI", 10), bg=HEADER_COLOR, fg=HEADER_SUBTITLE)
+subtitle_label.pack(anchor="w", pady=(1, 0))
 
+# Large, visible toolbar replaces the tiny menu in the window corner.
+toolbar = tk.Frame(root, bg="#F8FAFD", highlightbackground=BORDER_COLOR, highlightthickness=1)
+toolbar.pack(fill="x", padx=0, pady=(0, 8))
 
-subtitle_label = tk.Label(
-    header_frame,
-    text="Discrete-Time Signal Processing",
-    font=("Arial", 11),
-    bg=BG_COLOR,
-    fg=MUTED_COLOR
-)
+def toolbar_button(parent, text, command, primary=False):
+    return tk.Button(parent, text=text, command=command,
+                     bg=PRIMARY_COLOR if primary else "#E8EEF7",
+                     fg="white" if primary else TEXT_COLOR,
+                     activebackground=PRIMARY_HOVER if primary else "#D8E3F1",
+                     activeforeground="white" if primary else TEXT_COLOR,
+                     relief="flat", bd=0, cursor="hand2",
+                     font=("Segoe UI", 10, "bold"), padx=18, pady=11)
 
-subtitle_label.pack(
-    anchor="w",
-    pady=(2, 0)
-)
+def show_generation_menu(event=None):
+    try:
+        signal_generation_menu.tk_popup(generation_button.winfo_rootx(),
+                                        generation_button.winfo_rooty() + generation_button.winfo_height())
+    finally:
+        signal_generation_menu.grab_release()
 
+toolbar_button(toolbar, "⌂   Home", lambda: clear_plot(), primary=True).pack(side="left", padx=(18, 8), pady=9)
+toolbar_button(toolbar, "📂   Load Signal", load_signal).pack(side="left", padx=7, pady=9)
+generation_button = toolbar_button(toolbar, "∿   Signal Generation   ▾", show_generation_menu)
+generation_button.pack(side="left", padx=7, pady=9)
+toolbar_button(toolbar, "⚙   Operations", lambda: operation_menu.focus_set()).pack(side="left", padx=7, pady=9)
+tk.Label(toolbar, text="TASK 1 + TASK 2", font=("Segoe UI", 9, "bold"),
+         bg="#F8FAFD", fg=MUTED_COLOR).pack(side="right", padx=22)
 
 # ============================================================
 # MAIN CONTENT
 # ============================================================
 
-main_frame = tk.Frame(
-    root,
-    bg=BG_COLOR
-)
-
-main_frame.pack(
-    fill="both",
-    expand=True,
-    padx=30,
-    pady=10
-)
+main_frame = tk.Frame(root, bg=BG_COLOR)
+main_frame.pack(fill="both", expand=True, padx=14, pady=(0, 10))
 
 
 # ============================================================
-# LEFT CONTROL PANEL
+# LEFT CONTROL PANEL - RESPONSIVE / SCROLLABLE
 # ============================================================
 
-control_panel = tk.Frame(
+control_container = tk.Frame(
     main_frame,
-    bg=PANEL_COLOR,
-    highlightbackground="#D1D5DB",
-    highlightthickness=1
+    bg=BG_COLOR,
+    width=380
 )
 
-control_panel.pack(
+control_container.pack(
     side="left",
     fill="y",
     padx=(0, 15)
 )
 
-control_panel.configure(
+# Keep the left panel at a predictable width
+control_container.pack_propagate(False)
+
+# Canvas allows the controls to scroll vertically
+control_canvas = tk.Canvas(
+    control_container,
+    bg=PANEL_COLOR,
+    highlightthickness=0,
     width=350
 )
 
-control_panel.pack_propagate(
-    False
+control_scrollbar = ttk.Scrollbar(
+    control_container,
+    orient="vertical",
+    command=control_canvas.yview
 )
+
+control_canvas.configure(
+    yscrollcommand=control_scrollbar.set
+)
+
+control_scrollbar.pack(
+    side="right",
+    fill="y"
+)
+
+control_canvas.pack(
+    side="left",
+    fill="both",
+    expand=True
+)
+
+# This is the frame that holds all your existing controls
+control_panel = tk.Frame(control_canvas, bg=PANEL_COLOR,
+                          highlightbackground=BORDER_COLOR, highlightthickness=1)
+
+control_window = control_canvas.create_window(
+    (0, 0),
+    window=control_panel,
+    anchor="nw"
+)
+
+
+def update_control_scroll_region(event=None):
+    # Update after Tk has completed geometry calculations.
+    control_canvas.after_idle(
+        lambda: control_canvas.configure(
+            scrollregion=control_canvas.bbox("all") or (0, 0, 0, 0)
+        )
+    )
+
+
+def resize_control_content(event):
+    # Make the controls frame fit the available canvas width.
+    if event.width > 1:
+        control_canvas.itemconfigure(
+            control_window,
+            width=event.width
+        )
+
+
+control_panel.bind(
+    "<Configure>",
+    update_control_scroll_region
+)
+
+control_canvas.bind(
+    "<Configure>",
+    resize_control_content
+)
+
+
+# Mouse-wheel scrolling for the left panel (Windows and Linux).
+# The handler only scrolls when the mouse is actually over the controls panel.
+def scroll_controls(event):
+    widget = root.winfo_containing(event.x_root, event.y_root)
+
+    while widget is not None:
+        if widget == control_container:
+            if getattr(event, "num", None) == 4:       # Linux: wheel up
+                control_canvas.yview_scroll(-1, "units")
+            elif getattr(event, "num", None) == 5:     # Linux: wheel down
+                control_canvas.yview_scroll(1, "units")
+            else:                                       # Windows
+                delta = getattr(event, "delta", 0)
+                if delta:
+                    control_canvas.yview_scroll(
+                        -1 if delta > 0 else 1,
+                        "units"
+                    )
+            return "break"
+        widget = getattr(widget, "master", None)
+
+    return None
+
+
+root.bind_all("<MouseWheel>", scroll_controls)
+root.bind_all("<Button-4>", scroll_controls)
+root.bind_all("<Button-5>", scroll_controls)
 
 
 # ============================================================
@@ -869,7 +1077,7 @@ control_panel.pack_propagate(
 control_title = tk.Label(
     control_panel,
     text="Controls",
-    font=("Arial", 16, "bold"),
+    font=("Segoe UI", 15, "bold"),
     bg=PANEL_COLOR,
     fg=TEXT_COLOR
 )
@@ -884,7 +1092,7 @@ control_title.pack(
 control_description = tk.Label(
     control_panel,
     text="Load signals and choose an operation.",
-    font=("Arial", 10),
+    font=("Segoe UI", 10),
     bg=PANEL_COLOR,
     fg=MUTED_COLOR
 )
@@ -903,7 +1111,7 @@ control_description.pack(
 signal_section = tk.LabelFrame(
     control_panel,
     text=" Signals ",
-    font=("Arial", 11, "bold"),
+    font=("Segoe UI", 10, "bold"),
     bg=PANEL_COLOR,
     fg=TEXT_COLOR,
     bd=1,
@@ -924,7 +1132,7 @@ signal_section.pack(
 signal_count_label = tk.Label(
     signal_section,
     text="0 signal(s) loaded",
-    font=("Arial", 9),
+    font=("Segoe UI", 9),
     bg=PANEL_COLOR,
     fg=MUTED_COLOR
 )
@@ -944,7 +1152,7 @@ signals_listbox = tk.Listbox(
     signal_section,
     width=35,
     height=8,
-    font=("Arial", 10),
+    font=("Segoe UI", 10),
     selectmode=tk.EXTENDED,
     activestyle="none",
     bg="#F9FAFB",
@@ -974,7 +1182,7 @@ signals_listbox.bind(
 selection_count_label = tk.Label(
     signal_section,
     text="0 selected",
-    font=("Arial", 9),
+    font=("Segoe UI", 9),
     bg=PANEL_COLOR,
     fg=MUTED_COLOR
 )
@@ -1032,7 +1240,7 @@ display_button = tk.Button(
     activebackground="#D1D5DB",
     relief="flat",
     cursor="hand2",
-    font=("Arial", 10),
+    font=("Segoe UI", 10),
     padx=10,
     pady=6
 )
@@ -1052,7 +1260,7 @@ info_button = tk.Button(
     activebackground="#D1D5DB",
     relief="flat",
     cursor="hand2",
-    font=("Arial", 10),
+    font=("Segoe UI", 10),
     padx=10,
     pady=6
 )
@@ -1088,7 +1296,7 @@ remove_button = tk.Button(
     activebackground="#FECACA",
     relief="flat",
     cursor="hand2",
-    font=("Arial", 9),
+    font=("Segoe UI", 9),
     padx=10,
     pady=5
 )
@@ -1107,7 +1315,7 @@ clear_button = tk.Button(
     activebackground="#D1D5DB",
     relief="flat",
     cursor="hand2",
-    font=("Arial", 9),
+    font=("Segoe UI", 9),
     padx=10,
     pady=5
 )
@@ -1124,7 +1332,7 @@ clear_button.pack(
 operation_section = tk.LabelFrame(
     control_panel,
     text=" Operation ",
-    font=("Arial", 11, "bold"),
+    font=("Segoe UI", 10, "bold"),
     bg=PANEL_COLOR,
     fg=TEXT_COLOR,
     bd=1,
@@ -1172,7 +1380,7 @@ operation_menu.bind(
 instruction_label = tk.Label(
     operation_section,
     text="Select two or more signals to add them.",
-    font=("Arial", 9),
+    font=("Segoe UI", 9),
     bg=PANEL_COLOR,
     fg=MUTED_COLOR,
     justify="left",
@@ -1288,7 +1496,7 @@ apply_button = tk.Button(
     activeforeground="white",
     relief="flat",
     cursor="hand2",
-    font=("Arial", 11, "bold"),
+    font=("Segoe UI", 10, "bold"),
     padx=20,
     pady=8
 )
@@ -1332,7 +1540,7 @@ status_title.pack(
 status_label = tk.Label(
     status_frame,
     text="Load signals to begin.",
-    font=("Arial", 9),
+    font=("Segoe UI", 9),
     bg=PANEL_COLOR,
     fg=MUTED_COLOR,
     justify="left",
@@ -1349,12 +1557,8 @@ status_label.pack(
 # RIGHT PLOT PANEL
 # ============================================================
 
-plot_panel = tk.Frame(
-    main_frame,
-    bg=PANEL_COLOR,
-    highlightbackground="#D1D5DB",
-    highlightthickness=1
-)
+plot_panel = tk.Frame(main_frame, bg=PANEL_COLOR,
+                       highlightbackground=BORDER_COLOR, highlightthickness=1)
 
 plot_panel.pack(
     side="right",
@@ -1381,8 +1585,8 @@ plot_header.pack(
 
 plot_title = tk.Label(
     plot_header,
-    text="Signal Visualization",
-    font=("Arial", 16, "bold"),
+    text="▥  Signal Visualization",
+    font=("Segoe UI", 15, "bold"),
     bg=PANEL_COLOR,
     fg=TEXT_COLOR
 )
@@ -1395,7 +1599,7 @@ plot_title.pack(
 plot_description = tk.Label(
     plot_header,
     text="Discrete-time signal",
-    font=("Arial", 9),
+    font=("Segoe UI", 9),
     bg=PANEL_COLOR,
     fg=MUTED_COLOR
 )
@@ -1403,6 +1607,18 @@ plot_description = tk.Label(
 plot_description.pack(
     side="right"
 )
+
+
+plot_style_var = tk.StringVar(value="Discrete")
+plot_style_menu = ttk.Combobox(
+    plot_header,
+    textvariable=plot_style_var,
+    values=["Discrete", "Continuous"],
+    state="readonly",
+    width=18
+)
+plot_style_menu.pack(side="right", padx=(8, 12))
+plot_style_menu.bind("<<ComboboxSelected>>", plot_style_changed)
 
 
 # ============================================================
@@ -1418,28 +1634,72 @@ plot_frame.pack(
     fill="both",
     expand=True,
     padx=15,
-    pady=15
+    pady=(12, 8)
 )
+
+# Compact information and quick-action cards inspired by the approved mockup.
+bottom_tools = tk.Frame(plot_panel, bg=PANEL_COLOR)
+bottom_tools.pack(fill="x", padx=15, pady=(0, 14))
+bottom_tools.columnconfigure(0, weight=3)
+bottom_tools.columnconfigure(1, weight=2)
+
+info_card = tk.Frame(bottom_tools, bg="#F8FAFD", highlightbackground=BORDER_COLOR, highlightthickness=1)
+info_card.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+info_heading = tk.Label(info_card, text="▥  Signal Information", font=("Segoe UI", 11, "bold"),
+                        bg="#F8FAFD", fg=TEXT_COLOR)
+info_heading.pack(anchor="w", padx=12, pady=(9, 3))
+signal_summary_label = tk.Label(info_card, text="Select a signal to view its sample count and value range.",
+                               font=("Segoe UI", 9), bg="#F8FAFD", fg=MUTED_COLOR,
+                               anchor="w", justify="left", wraplength=460)
+signal_summary_label.pack(fill="x", padx=12, pady=(0, 10))
+
+quick_card = tk.Frame(bottom_tools, bg="#F8FAFD", highlightbackground=BORDER_COLOR, highlightthickness=1)
+quick_card.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+quick_heading = tk.Label(quick_card, text="⚡  Quick Actions", font=("Segoe UI", 11, "bold"),
+                         bg="#F8FAFD", fg=TEXT_COLOR)
+quick_heading.pack(anchor="w", padx=12, pady=(9, 5))
+quick_buttons = tk.Frame(quick_card, bg="#F8FAFD")
+quick_buttons.pack(fill="x", padx=8, pady=(0, 9))
+
+def quick_button(parent, label, command, color=PRIMARY_COLOR, foreground="white"):
+    return tk.Button(parent, text=label, command=command, bg=color, fg=foreground,
+                     activebackground=PRIMARY_HOVER if color == PRIMARY_COLOR else "#DCE6F3",
+                     activeforeground="white" if foreground == "white" else TEXT_COLOR,
+                     relief="flat", bd=0, cursor="hand2", font=("Segoe UI", 9, "bold"),
+                     padx=8, pady=7)
+
+quick_button(quick_buttons, "Display Selected", display_selected_signal).pack(side="left", fill="x", expand=True, padx=3)
+quick_button(quick_buttons, "Show Info", show_signal_info, "#E8E5FF", "#5544B7").pack(side="left", fill="x", expand=True, padx=3)
+quick_button(quick_buttons, "Clear Plot", clear_plot, "#FCE7EA", ERROR_COLOR).pack(side="left", fill="x", expand=True, padx=3)
+
+
+def update_signal_summary(event=None):
+    selected = list(signals_listbox.curselection())
+    if not selected:
+        signal_summary_label.config(text=f"{len(loaded_signals)} signal(s) loaded. Select a signal to see its details.")
+        return
+    summaries = []
+    for i in selected[:3]:
+        indices, samples = loaded_signals[i]
+        if samples:
+            summaries.append(f"{loaded_signal_names[i]}  ·  {len(samples)} samples  ·  min {min(samples):.3g}  ·  max {max(samples):.3g}")
+    if len(selected) > 3:
+        summaries.append(f"and {len(selected) - 3} more selected…")
+    signal_summary_label.config(text="\n".join(summaries) or "Selected signal has no samples.")
+
+signals_listbox.bind("<<ListboxSelect>>", lambda event: (update_selection_count(event), update_signal_summary(event)))
 
 
 # ============================================================
 # MATPLOTLIB FIGURE
 # ============================================================
 
-figure = plt.Figure(
-    figsize=(7, 5),
-    dpi=100
-)
+figure = plt.Figure(figsize=(7, 5), dpi=100, facecolor="#FFFFFF")
 
-ax = figure.add_subplot(
-    111
-)
+ax = figure.add_subplot(111)
+ax.set_facecolor("#FFFFFF")
 
-ax.set_title(
-    "Signal Plot",
-    fontsize=14,
-    fontweight="bold"
-)
+ax.set_title("Selected Signals", fontsize=14, fontweight="bold", color=TEXT_COLOR)
 
 ax.set_xlabel(
     "n"
@@ -1468,27 +1728,45 @@ canvas = FigureCanvasTkAgg(
 
 canvas.draw()
 
-canvas.get_tk_widget().pack(
+canvas_widget = canvas.get_tk_widget()
+canvas_widget.pack(
     fill="both",
     expand=True
 )
+
+
+def resize_plot(event):
+    """Resize the figure to the available plot frame without a resize loop."""
+    # Bind this handler to plot_frame (the parent), not the canvas widget.
+    # Resizing the figure from the canvas widget's own Configure event can
+    # create a feedback loop and cause layout glitches when maximizing.
+    if event.width <= 1 or event.height <= 1:
+        return
+
+    dpi = figure.get_dpi()
+    available_width = max(2, event.width - 30)
+    available_height = max(2, event.height - 30)
+
+    new_width = available_width / dpi
+    new_height = available_height / dpi
+
+    current_width, current_height = figure.get_size_inches()
+    if (abs(current_width - new_width) > 0.05 or
+            abs(current_height - new_height) > 0.05):
+        figure.set_size_inches(new_width, new_height, forward=False)
+        canvas.draw_idle()
+
+
+plot_frame.bind("<Configure>", resize_plot)
 
 
 # ============================================================
 # FOOTER
 # ============================================================
 
-footer_label = tk.Label(
-    root,
-    text="DSP Task 1 • Signal Processing GUI",
-    font=("Arial", 9),
-    bg=BG_COLOR,
-    fg=MUTED_COLOR
-)
-
-footer_label.pack(
-    pady=(0, 10)
-)
+footer_label = tk.Label(root, text="DSP Signal Processing Lab  •  Signal Processing & Generation",
+                         font=("Segoe UI", 8), bg=BG_COLOR, fg=MUTED_COLOR)
+footer_label.pack(pady=(0, 5))
 
 
 # ============================================================
