@@ -160,3 +160,32 @@ def generate_cosine_signal(amplitude, phase, analog_frequency,sampling_frequency
         samples.append(value)
 
     return indices, samples
+
+
+def quantize_signal(signal, levels):
+    """Uniformly quantize a signal. Returns indices, quantized values,
+    integer level codes, errors (original - quantized), and step size.
+    """
+    indices, samples = signal
+    if not isinstance(levels, int) or isinstance(levels, bool) or levels < 2:
+        raise ValueError("Number of quantization levels must be an integer of at least 2.")
+    if not samples:
+        raise ValueError("Cannot quantize an empty signal.")
+    if not all(math.isfinite(value) for value in samples):
+        raise ValueError("Signal samples must all be finite numbers.")
+
+    minimum, maximum = min(samples), max(samples)
+    if math.isclose(minimum, maximum, rel_tol=0.0, abs_tol=1e-15):
+        return indices.copy(), samples.copy(), [0] * len(samples), [0.0] * len(samples), 0.0
+
+    step_size = (maximum - minimum) / levels
+    quantized_samples, encoded_levels, errors = [], [], []
+    for sample in samples:
+        code = int((sample - minimum) / step_size)
+        code = max(0, min(levels - 1, code))
+        quantized = minimum + (code + 0.5) * step_size
+        quantized_samples.append(quantized)
+        encoded_levels.append(code)
+        errors.append(sample - quantized)
+
+    return indices.copy(), quantized_samples, encoded_levels, errors, step_size

@@ -11,7 +11,8 @@ from signal_processing import (
     multiply_signal,
     subtract_signals,
     shift_signal,
-    fold_signal
+    fold_signal,
+    quantize_signal
 )
 
 
@@ -132,6 +133,133 @@ def open_signal_generator(waveform):
                        font=("Arial", 10, "bold"), padx=14, pady=8)
     button.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(16, 0))
     entries["Amplitude (A)"].focus_set()
+def open_quantization_dialog():
+    """Quantize the single selected signal and display encoded values and errors."""
+    selected = list(signals_listbox.curselection())
+    if len(selected) != 1:
+        messagebox.showwarning("Select One Signal", "Please select exactly one signal to quantize.", parent=root)
+        return
+
+    source_index = selected[0]
+    source_name = loaded_signal_names[source_index]
+    source_signal = loaded_signals[source_index]
+    dialog = tk.Toplevel(root)
+    dialog.title("Task 3 - Signal Quantization")
+    dialog.transient(root)
+    dialog.configure(bg=PANEL_COLOR)
+    dialog.geometry("900x620")
+    dialog.minsize(760, 520)
+
+    outer = tk.Frame(dialog, bg=PANEL_COLOR, padx=20, pady=18)
+    outer.pack(fill="both", expand=True)
+    tk.Label(outer, text="Signal Quantization", font=("Segoe UI", 18, "bold"),
+             bg=PANEL_COLOR, fg=TEXT_COLOR).pack(anchor="w")
+    tk.Label(outer, text=f"Input signal: {source_name}", font=("Segoe UI", 10),
+             bg=PANEL_COLOR, fg=MUTED_COLOR).pack(anchor="w", pady=(3, 12))
+
+    settings = tk.Frame(outer, bg="#F8FAFD", padx=12, pady=10,
+                        highlightbackground=BORDER_COLOR, highlightthickness=1)
+    settings.pack(fill="x", pady=(0, 12))
+    mode_var = tk.StringVar(value="bits")
+    tk.Label(settings, text="Quantize by:", font=("Segoe UI", 10, "bold"),
+             bg="#F8FAFD", fg=TEXT_COLOR).grid(row=0, column=0, padx=(0, 10))
+    ttk.Radiobutton(settings, text="Number of bits", variable=mode_var, value="bits").grid(row=0, column=1, padx=8)
+    ttk.Radiobutton(settings, text="Number of levels", variable=mode_var, value="levels").grid(row=0, column=2, padx=8)
+    amount_entry = tk.Entry(settings, font=("Segoe UI", 11), width=9, relief="solid", bd=1)
+    amount_entry.insert(0, "3")
+    amount_entry.grid(row=0, column=3, padx=(8, 0))
+    hint = tk.Label(settings, text="3 bits = 8 levels", font=("Segoe UI", 9), bg="#F8FAFD", fg=MUTED_COLOR)
+    hint.grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
+
+    def update_hint(*_):
+        try:
+            value = int(amount_entry.get())
+            if value <= 0:
+                raise ValueError
+            hint.config(text=(f"{value} bits = {2 ** value} levels" if mode_var.get() == "bits"
+                              else f"{value} quantization levels"))
+        except ValueError:
+            hint.config(text="Enter a positive whole number")
+    amount_entry.bind("<KeyRelease>", update_hint)
+    mode_var.trace_add("write", update_hint)
+
+    table_frame = tk.Frame(outer, bg=PANEL_COLOR)
+    table_frame.pack(fill="both", expand=True)
+    columns = ("n", "original", "quantized", "code", "error")
+    table = ttk.Treeview(table_frame, columns=columns, show="headings", height=12)
+    headings = {"n": "Sample n", "original": "Original x[n]", "quantized": "Quantized xq[n]",
+                "code": "Encoded code", "error": "Error e[n] = x - xq"}
+    widths = {"n": 75, "original": 135, "quantized": 145, "code": 130, "error": 180}
+    for column in columns:
+        table.heading(column, text=headings[column])
+        table.column(column, width=widths[column], anchor="center")
+    scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
+    table.configure(yscrollcommand=scrollbar.set)
+    table.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+    summary = tk.Label(outer, text="Choose bits or levels, then click Quantize Signal.",
+                       font=("Segoe UI", 9), bg=PANEL_COLOR, fg=MUTED_COLOR, anchor="w")
+    summary.pack(fill="x", pady=(10, 8))
+
+    def run_quantization():
+        try:
+            amount = int(amount_entry.get().strip())
+            if amount <= 0:
+                raise ValueError("Enter a positive whole number.")
+            if mode_var.get() == "bits":
+                if amount > 16:
+                    raise ValueError("Choose between 1 and 16 bits.")
+                levels = 2 ** amount
+            else:
+                levels = amount
+                if not 2 <= levels <= 65536:
+                    raise ValueError("Choose between 2 and 65536 levels.")
+            indices, quantized, codes, errors, step = quantize_signal(source_signal, levels)
+        except (ValueError, OverflowError) as exc:
+            messagebox.showerror("Invalid Quantization Settings", str(exc), parent=dialog)
+            return
+
+        for item in table.get_children():
+            table.delete(item)
+        bit_width = max(1, math.ceil(math.log2(levels)))
+        original_samples = source_signal[1]
+        for n, original, q_value, code, error in zip(indices, original_samples, quantized, codes, errors):
+            table.insert("", "end", values=(n, f"{original:.6g}", f"{q_value:.6g}",
+                                             f"{format(code, f'0{bit_width}b')} (L{code})", f"{error:.6g}"))
+
+        q_name = f"Quantized {source_name} ({levels} levels)"
+        e_name = f"Quantization Error {source_name} ({levels} levels)"
+        for name in (q_name, e_name):
+            if name in loaded_signal_names:
+                old_index = loaded_signal_names.index(name)
+                loaded_signal_names.pop(old_index)
+                loaded_signals.pop(old_index)
+        loaded_signals.append((indices.copy(), quantized.copy()))
+        loaded_signal_names.append(q_name)
+        loaded_signals.append((indices.copy(), errors.copy()))
+        loaded_signal_names.append(e_name)
+        signals_listbox.delete(0, tk.END)
+        for name in loaded_signal_names:
+            signals_listbox.insert(tk.END, name)
+        q_index = loaded_signal_names.index(q_name)
+        signals_listbox.selection_set(q_index)
+        signals_listbox.activate(q_index)
+        update_signal_count()
+        update_selection_count()
+        update_signal_summary()
+        display_signal(indices, quantized, q_name)
+        status_label.config(text=f"Quantized using {levels} levels. Quantized signal and error added to the list.", fg=SUCCESS_COLOR)
+        max_error = max((abs(value) for value in errors), default=0.0)
+        summary.config(text=f"Levels: {levels}  |  Code width: {bit_width} bits  |  Step Δ: {step:.6g}  |  Max |error|: {max_error:.6g}")
+
+    buttons = tk.Frame(outer, bg=PANEL_COLOR)
+    buttons.pack(fill="x")
+    tk.Button(buttons, text="Quantize Signal", command=run_quantization, bg=PRIMARY_COLOR,
+              fg="white", activebackground=PRIMARY_HOVER, relief="flat", bd=0,
+              cursor="hand2", font=("Segoe UI", 10, "bold"), padx=18, pady=9).pack(side="left")
+    tk.Button(buttons, text="Close", command=dialog.destroy, bg=SECONDARY_COLOR,
+              fg=TEXT_COLOR, relief="flat", bd=0, cursor="hand2",
+              font=("Segoe UI", 10), padx=18, pady=9).pack(side="right")
 
 
 # ============================================================
@@ -941,8 +1069,9 @@ toolbar_button(toolbar, "⌂   Home", lambda: clear_plot(), primary=True).pack(s
 toolbar_button(toolbar, "📂   Load Signal", load_signal).pack(side="left", padx=7, pady=9)
 generation_button = toolbar_button(toolbar, "∿   Signal Generation   ▾", show_generation_menu)
 generation_button.pack(side="left", padx=7, pady=9)
+toolbar_button(toolbar, "▦   Quantization", open_quantization_dialog, primary=True).pack(side="left", padx=7, pady=9)
 toolbar_button(toolbar, "⚙   Operations", lambda: operation_menu.focus_set()).pack(side="left", padx=7, pady=9)
-tk.Label(toolbar, text="TASK 1 + TASK 2", font=("Segoe UI", 9, "bold"),
+tk.Label(toolbar, text="TASK 1 + TASK 2 + TASK 3", font=("Segoe UI", 9, "bold"),
          bg="#F8FAFD", fg=MUTED_COLOR).pack(side="right", padx=22)
 
 # ============================================================
@@ -1613,7 +1742,7 @@ plot_style_var = tk.StringVar(value="Discrete")
 plot_style_menu = ttk.Combobox(
     plot_header,
     textvariable=plot_style_var,
-    values=["Discrete", "Continuous"],
+    values=["Discrete", "Continuous-style"],
     state="readonly",
     width=18
 )
