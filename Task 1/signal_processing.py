@@ -2,20 +2,54 @@ import matplotlib.pyplot as plt
 import math
 
 def read_signal(filename):
-    with open(filename, "r") as file:
-        lines = file.readlines()
+    """Read supported DSP signal text formats.
 
-    n = int(lines[0].strip())
+    Supported formats:
+    1) Task 1: first line is the sample count, followed by index/value pairs.
+    2) Quantization test format 1: index/value pairs only.
+    3) Quantization test format 2: three one-value header lines, then pairs;
+       the third header value is the number of samples.
+    """
+    with open(filename, "r", encoding="utf-8-sig") as file:
+        lines = [line.strip() for line in file if line.strip()]
 
-    indices = []
-    samples = []
+    if not lines:
+        raise ValueError("The signal file is empty.")
 
-    for i in range(1, n + 1):
-        index, value = lines[i].split()
-        indices.append(int(index))
-        samples.append(float(value))
+    tokenized = [line.split() for line in lines]
 
-    return indices, samples
+    def parse_pairs(pair_lines):
+        indices, samples = [], []
+        for line_number, tokens in enumerate(pair_lines, start=1):
+            if len(tokens) != 2:
+                raise ValueError(f"Invalid signal data at data line {line_number}: expected index and sample value.")
+            indices.append(int(tokens[0]))
+            samples.append(float(tokens[1]))
+        if not samples:
+            raise ValueError("The signal file contains no samples.")
+        return indices, samples
+
+    # Format 2: three scalar header lines; third value is sample count.
+    if (len(tokenized) >= 4
+            and all(len(tokens) == 1 for tokens in tokenized[:3])
+            and tokenized[2][0].lstrip("+-").isdigit()):
+        declared_count = int(tokenized[2][0])
+        remaining = tokenized[3:]
+        if declared_count == len(remaining) and all(len(row) == 2 for row in remaining):
+            return parse_pairs(remaining)
+
+    # Task 1 format: one sample-count header followed by that many pairs.
+    if len(tokenized[0]) == 1 and tokenized[0][0].lstrip("+-").isdigit():
+        declared_count = int(tokenized[0][0])
+        remaining = tokenized[1:]
+        if declared_count == len(remaining) and all(len(row) == 2 for row in remaining):
+            return parse_pairs(remaining)
+
+    # Pair-only format used by Quantization Test Case 1.
+    if all(len(row) == 2 for row in tokenized):
+        return parse_pairs(tokenized)
+
+    raise ValueError("Unrecognized signal file format. Expected sample index/value pairs, optionally preceded by a supported header.")
 
 def add_signals(*signals):
     result_dict = {}
@@ -161,31 +195,149 @@ def generate_cosine_signal(amplitude, phase, analog_frequency,sampling_frequency
 
     return indices, samples
 
-
 def quantize_signal(signal, levels):
-    """Uniformly quantize a signal. Returns indices, quantized values,
-    integer level codes, errors (original - quantized), and step size.
+    """Uniform mid-rise quantization.
+
+    Returns: sample indices, quantized values, 1-based interval indices,
+    zero-based integer codes, encoded binary strings, errors (quantized-original),
+    and quantization step size.
     """
     indices, samples = signal
+
     if not isinstance(levels, int) or isinstance(levels, bool) or levels < 2:
         raise ValueError("Number of quantization levels must be an integer of at least 2.")
+    if len(indices) != len(samples):
+        raise ValueError("Signal indices and samples must have the same length.")
     if not samples:
         raise ValueError("Cannot quantize an empty signal.")
     if not all(math.isfinite(value) for value in samples):
         raise ValueError("Signal samples must all be finite numbers.")
 
-    minimum, maximum = min(samples), max(samples)
+    minimum = min(samples)
+    maximum = max(samples)
+    bit_width = max(1, math.ceil(math.log2(levels)))
+
     if math.isclose(minimum, maximum, rel_tol=0.0, abs_tol=1e-15):
-        return indices.copy(), samples.copy(), [0] * len(samples), [0.0] * len(samples), 0.0
+        count = len(samples)
+        return (indices.copy(), samples.copy(), [1] * count, [0] * count,
+                [format(0, f"0{bit_width}b")] * count, [0.0] * count, 0.0)
 
     step_size = (maximum - minimum) / levels
-    quantized_samples, encoded_levels, errors = [], [], []
+    quantized_samples = []
+    interval_indices = []
+    integer_codes = []
+    encoded_values = []
+    errors = []
+
     for sample in samples:
+        # Zero-based code identifies the interval; clamp the maximum endpoint.
         code = int((sample - minimum) / step_size)
         code = max(0, min(levels - 1, code))
-        quantized = minimum + (code + 0.5) * step_size
-        quantized_samples.append(quantized)
-        encoded_levels.append(code)
-        errors.append(sample - quantized)
 
-    return indices.copy(), quantized_samples, encoded_levels, errors, step_size
+        # Representative amplitude is the midpoint of the selected interval.
+        quantized = minimum + (code + 0.5) * step_size
+
+        quantized_samples.append(quantized)
+        interval_indices.append(code + 1)  # Test-case interval numbering starts at 1.
+        integer_codes.append(code)
+        encoded_values.append(format(code, f"0{bit_width}b"))
+        errors.append(quantized - sample)  # Required test-case sign: quantized - original.
+
+    return (indices.copy(), quantized_samples, interval_indices,
+            integer_codes, encoded_values, errors, step_size)
+
+
+
+# ============================================================
+# TASK 5 - MOVING AVERAGE, DERIVATIVES, AND CONVOLUTION
+# ============================================================
+
+def moving_average(signal, window_size):
+    """Calculate a trailing moving average using complete windows only.
+
+    The output index starts at the input signal's first index and advances
+    by one for each complete window. Output length is N - window_size + 1.
+    """
+    indices, samples = signal
+    if len(indices) != len(samples):
+        raise ValueError("Signal indices and samples must have the same length.")
+    if not isinstance(window_size, int) or isinstance(window_size, bool) or window_size <= 0:
+        raise ValueError("Window size must be a positive integer.")
+    if window_size > len(samples):
+        raise ValueError("Window size cannot be greater than the number of samples.")
+
+    result_indices = []
+    result_samples = []
+    for start in range(len(samples) - window_size + 1):
+        window = samples[start:start + window_size]
+        result_indices.append(indices[start])
+        result_samples.append(sum(window) / window_size)
+    return result_indices, result_samples
+
+
+def first_derivative(signal):
+    """Calculate the first forward difference x[n+1] - x[n]."""
+    indices, samples = signal
+    if len(indices) != len(samples):
+        raise ValueError("Signal indices and samples must have the same length.")
+    if len(samples) < 2:
+        raise ValueError("At least two samples are required for the first derivative.")
+
+    result_indices = indices[:-1].copy()
+    result_samples = [
+        samples[i + 1] - samples[i]
+        for i in range(len(samples) - 1)
+    ]
+    return result_indices, result_samples
+
+
+def second_derivative(signal):
+    """Calculate the second forward difference x[n+2] - 2*x[n+1] + x[n]."""
+    indices, samples = signal
+    if len(indices) != len(samples):
+        raise ValueError("Signal indices and samples must have the same length.")
+    if len(samples) < 3:
+        raise ValueError("At least three samples are required for the second derivative.")
+
+    result_indices = indices[:-2].copy()
+    result_samples = [
+        samples[i + 2] - 2 * samples[i + 1] + samples[i]
+        for i in range(len(samples) - 2)
+    ]
+    return result_indices, result_samples
+
+
+def convolve_signals(signal1, signal2):
+    """Perform full linear convolution and preserve the summed index origin."""
+    indices1, samples1 = signal1
+    indices2, samples2 = signal2
+    if len(indices1) != len(samples1) or len(indices2) != len(samples2):
+        raise ValueError("Each signal's indices and samples must have the same length.")
+    if not samples1 or not samples2:
+        raise ValueError("Cannot convolve an empty signal.")
+
+    output = [0.0] * (len(samples1) + len(samples2) - 1)
+    for i, value1 in enumerate(samples1):
+        for j, value2 in enumerate(samples2):
+            output[i + j] += value1 * value2
+
+    start_index = indices1[0] + indices2[0]
+    output_indices = list(range(start_index, start_index + len(output)))
+    return output_indices, output
+
+
+def compare_signals(actual_signal, expected_signal, tolerance=1e-3):
+    """Compare two (indices, samples) signals, returning True when they match."""
+    actual_indices, actual_samples = actual_signal
+    expected_indices, expected_samples = expected_signal
+
+    if actual_indices != expected_indices or len(actual_samples) != len(expected_samples):
+        return False
+    return all(
+        math.isclose(float(actual), float(expected), rel_tol=0.0, abs_tol=tolerance)
+        for actual, expected in zip(actual_samples, expected_samples)
+    )
+
+
+# Backward-friendly singular alias for lab test harnesses that use this name.
+compare_signal = compare_signals

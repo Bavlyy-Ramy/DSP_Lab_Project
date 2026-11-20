@@ -12,7 +12,11 @@ from signal_processing import (
     subtract_signals,
     shift_signal,
     fold_signal,
-    quantize_signal
+    quantize_signal,
+    moving_average,
+    first_derivative,
+    second_derivative,
+    convolve_signals
 )
 
 
@@ -28,7 +32,11 @@ operations = [
     "Subtract",
     "Multiply",
     "Shift",
-    "Fold"
+    "Fold",
+    "Moving Average",
+    "First Derivative",
+    "Second Derivative",
+    "Convolution"
 ]
 
 
@@ -133,8 +141,10 @@ def open_signal_generator(waveform):
                        font=("Arial", 10, "bold"), padx=14, pady=8)
     button.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(16, 0))
     entries["Amplitude (A)"].focus_set()
+
+
 def open_quantization_dialog():
-    """Quantize the single selected signal and display encoded values and errors."""
+    """Run Task 3 quantization and show the exact columns required by each test case."""
     selected = list(signals_listbox.curselection())
     if len(selected) != 1:
         messagebox.showwarning("Select One Signal", "Please select exactly one signal to quantize.", parent=root)
@@ -143,6 +153,7 @@ def open_quantization_dialog():
     source_index = selected[0]
     source_name = loaded_signal_names[source_index]
     source_signal = loaded_signals[source_index]
+
     dialog = tk.Toplevel(root)
     dialog.title("Task 3 - Signal Quantization")
     dialog.transient(root)
@@ -173,7 +184,7 @@ def open_quantization_dialog():
 
     def update_hint(*_):
         try:
-            value = int(amount_entry.get())
+            value = int(amount_entry.get().strip())
             if value <= 0:
                 raise ValueError
             hint.config(text=(f"{value} bits = {2 ** value} levels" if mode_var.get() == "bits"
@@ -185,26 +196,18 @@ def open_quantization_dialog():
 
     table_frame = tk.Frame(outer, bg=PANEL_COLOR)
     table_frame.pack(fill="both", expand=True)
-    columns = ("n", "original", "quantized", "code", "error")
-    table = ttk.Treeview(table_frame, columns=columns, show="headings", height=12)
-    headings = {"n": "Sample n", "original": "Original x[n]", "quantized": "Quantized xq[n]",
-                "code": "Encoded code", "error": "Error e[n] = x - xq"}
-    widths = {"n": 75, "original": 135, "quantized": 145, "code": 130, "error": 180}
-    for column in columns:
-        table.heading(column, text=headings[column])
-        table.column(column, width=widths[column], anchor="center")
-    scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
-    table.configure(yscrollcommand=scrollbar.set)
-    table.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
+    table = None
+
     summary = tk.Label(outer, text="Choose bits or levels, then click Quantize Signal.",
                        font=("Segoe UI", 9), bg=PANEL_COLOR, fg=MUTED_COLOR, anchor="w")
     summary.pack(fill="x", pady=(10, 8))
 
     def run_quantization():
+        nonlocal table
         try:
-            amount = int(amount_entry.get().strip())
-            if amount <= 0:
+            raw_amount = amount_entry.get().strip()
+            amount = int(raw_amount)
+            if str(amount) != raw_amount or amount <= 0:
                 raise ValueError("Enter a positive whole number.")
             if mode_var.get() == "bits":
                 if amount > 16:
@@ -214,18 +217,39 @@ def open_quantization_dialog():
                 levels = amount
                 if not 2 <= levels <= 65536:
                     raise ValueError("Choose between 2 and 65536 levels.")
-            indices, quantized, codes, errors, step = quantize_signal(source_signal, levels)
+            indices, quantized, interval_indices, codes, encoded, errors, step = quantize_signal(source_signal, levels)
         except (ValueError, OverflowError) as exc:
             messagebox.showerror("Invalid Quantization Settings", str(exc), parent=dialog)
             return
 
-        for item in table.get_children():
-            table.delete(item)
-        bit_width = max(1, math.ceil(math.log2(levels)))
-        original_samples = source_signal[1]
-        for n, original, q_value, code, error in zip(indices, original_samples, quantized, codes, errors):
-            table.insert("", "end", values=(n, f"{original:.6g}", f"{q_value:.6g}",
-                                             f"{format(code, f'0{bit_width}b')} (L{code})", f"{error:.6g}"))
+        # Test Case 1 asks only for encoded + quantized. Test Case 2 asks for
+        # interval index + encoded + quantized + error.
+        if table is not None:
+            table.destroy()
+        if mode_var.get() == "bits":
+            columns = ("encoded", "quantized")
+            headings = {"encoded": "Encoded", "quantized": "Quantized"}
+            widths = {"encoded": 180, "quantized": 180}
+            rows = zip(encoded, quantized)
+        else:
+            columns = ("interval", "encoded", "quantized", "error")
+            headings = {"interval": "Interval Index", "encoded": "Encoded",
+                        "quantized": "Quantized", "error": "Quantization Error"}
+            widths = {"interval": 130, "encoded": 140, "quantized": 160, "error": 180}
+            rows = zip(interval_indices, encoded, quantized, errors)
+
+        table = ttk.Treeview(table_frame, columns=columns, show="headings", height=12)
+        for column in columns:
+            table.heading(column, text=headings[column])
+            table.column(column, width=widths[column], anchor="center")
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
+        table.configure(yscrollcommand=scrollbar.set)
+        table.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        for row in rows:
+            formatted = tuple(f"{value:.3f}" if isinstance(value, float) else value for value in row)
+            table.insert("", "end", values=formatted)
 
         q_name = f"Quantized {source_name} ({levels} levels)"
         e_name = f"Quantization Error {source_name} ({levels} levels)"
@@ -236,8 +260,10 @@ def open_quantization_dialog():
                 loaded_signals.pop(old_index)
         loaded_signals.append((indices.copy(), quantized.copy()))
         loaded_signal_names.append(q_name)
-        loaded_signals.append((indices.copy(), errors.copy()))
-        loaded_signal_names.append(e_name)
+        if mode_var.get() == "levels":
+            loaded_signals.append((indices.copy(), errors.copy()))
+            loaded_signal_names.append(e_name)
+
         signals_listbox.delete(0, tk.END)
         for name in loaded_signal_names:
             signals_listbox.insert(tk.END, name)
@@ -246,11 +272,12 @@ def open_quantization_dialog():
         signals_listbox.activate(q_index)
         update_signal_count()
         update_selection_count()
-        update_signal_summary()
+        if 'update_signal_summary' in globals():
+            update_signal_summary()
         display_signal(indices, quantized, q_name)
-        status_label.config(text=f"Quantized using {levels} levels. Quantized signal and error added to the list.", fg=SUCCESS_COLOR)
+        status_label.config(text=f"Quantized using {levels} levels.", fg=SUCCESS_COLOR)
         max_error = max((abs(value) for value in errors), default=0.0)
-        summary.config(text=f"Levels: {levels}  |  Code width: {bit_width} bits  |  Step Δ: {step:.6g}  |  Max |error|: {max_error:.6g}")
+        summary.config(text=f"Levels: {levels}  |  Code width: {max(1, math.ceil(math.log2(levels)))} bits  |  Step Δ: {step:.6g}  |  Max |error|: {max_error:.6g}")
 
     buttons = tk.Frame(outer, bg=PANEL_COLOR)
     buttons.pack(fill="x")
@@ -578,10 +605,12 @@ def operation_changed(event=None):
     # Hide optional input sections first
     constant_frame.pack_forget()
     shift_frame.pack_forget()
+    window_frame.pack_forget()
 
     # Clear old values
     constant_var.set("")
     shift_var.set("")
+    window_var.set("")
 
     # --------------------------------------------------------
     # ADD
@@ -651,6 +680,20 @@ def operation_changed(event=None):
             text="Select one signal to perform x(-n).\n"
                  "No additional value is required."
         )
+
+
+    elif operation == "Moving Average":
+        instruction_label.config(text="Select one signal and enter the moving-average window size.")
+        window_frame.pack(fill="x", padx=15, pady=8, before=apply_button)
+
+    elif operation == "First Derivative":
+        instruction_label.config(text="Select one signal to calculate the first forward difference.")
+
+    elif operation == "Second Derivative":
+        instruction_label.config(text="Select one signal to calculate the second forward difference.")
+
+    elif operation == "Convolution":
+        instruction_label.config(text="Select exactly two signals for full linear convolution.")
 
 
 # ============================================================
@@ -919,6 +962,50 @@ def apply_operation():
         )
 
 
+    elif operation == "Moving Average":
+        if len(selected) != 1:
+            messagebox.showwarning("Invalid Selection", "Please select exactly one signal.")
+            return
+        try:
+            raw_window = window_var.get().strip()
+            window_size = int(raw_window)
+            if str(window_size) != raw_window or window_size <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Invalid Window Size", "Enter a positive whole-number window size.")
+            window_entry.focus_set()
+            return
+        result_indices, result_samples = moving_average(loaded_signals[selected[0]], window_size)
+        display_signal(result_indices, result_samples, f"Moving Average (M={window_size})")
+        status_label.config(text=f"Moving average calculated using a window of {window_size}.", fg=SUCCESS_COLOR)
+
+    elif operation == "First Derivative":
+        if len(selected) != 1:
+            messagebox.showwarning("Invalid Selection", "Please select exactly one signal.")
+            return
+        result_indices, result_samples = first_derivative(loaded_signals[selected[0]])
+        display_signal(result_indices, result_samples, "First Derivative")
+        status_label.config(text="First derivative calculated successfully.", fg=SUCCESS_COLOR)
+
+    elif operation == "Second Derivative":
+        if len(selected) != 1:
+            messagebox.showwarning("Invalid Selection", "Please select exactly one signal.")
+            return
+        result_indices, result_samples = second_derivative(loaded_signals[selected[0]])
+        display_signal(result_indices, result_samples, "Second Derivative")
+        status_label.config(text="Second derivative calculated successfully.", fg=SUCCESS_COLOR)
+
+    elif operation == "Convolution":
+        if len(selected) != 2:
+            messagebox.showwarning("Invalid Selection", "Please select exactly two signals.")
+            return
+        result_indices, result_samples = convolve_signals(
+            loaded_signals[selected[0]], loaded_signals[selected[1]]
+        )
+        display_signal(result_indices, result_samples, "Convolution Result")
+        status_label.config(text="Full linear convolution completed successfully.", fg=SUCCESS_COLOR)
+
+
 # ============================================================
 # DISPLAY SIGNAL ON MATPLOTLIB
 # ============================================================
@@ -1071,7 +1158,7 @@ generation_button = toolbar_button(toolbar, "∿   Signal Generation   ▾", sho
 generation_button.pack(side="left", padx=7, pady=9)
 toolbar_button(toolbar, "▦   Quantization", open_quantization_dialog, primary=True).pack(side="left", padx=7, pady=9)
 toolbar_button(toolbar, "⚙   Operations", lambda: operation_menu.focus_set()).pack(side="left", padx=7, pady=9)
-tk.Label(toolbar, text="TASK 1 + TASK 2 + TASK 3", font=("Segoe UI", 9, "bold"),
+tk.Label(toolbar, text="TASKS 1–5", font=("Segoe UI", 9, "bold"),
          bg="#F8FAFD", fg=MUTED_COLOR).pack(side="right", padx=22)
 
 # ============================================================
@@ -1609,6 +1696,22 @@ shift_entry.pack(
     padx=(5, 10),
     pady=8
 )
+
+
+# ============================================================
+# MOVING AVERAGE WINDOW INPUT (TASK 5)
+# ============================================================
+
+window_frame = tk.Frame(operation_section, bg=INPUT_BG_COLOR,
+                        highlightbackground=INPUT_BORDER_COLOR, highlightthickness=1)
+window_label = tk.Label(window_frame, text="Window Size:", font=("Arial", 10, "bold"),
+                        bg=INPUT_BG_COLOR, fg=TEXT_COLOR)
+window_label.pack(side="left", padx=(10, 5), pady=8)
+
+window_var = tk.StringVar()
+window_entry = tk.Entry(window_frame, textvariable=window_var, width=12,
+                        font=("Arial", 11), relief="solid", bd=1)
+window_entry.pack(side="right", padx=(5, 10), pady=8)
 
 
 # ============================================================
