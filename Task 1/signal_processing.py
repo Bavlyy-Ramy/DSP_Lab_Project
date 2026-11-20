@@ -163,9 +163,6 @@ def generate_cosine_signal(amplitude, phase, analog_frequency,sampling_frequency
 
 
 def quantize_signal(signal, levels):
-    """Uniformly quantize a signal. Returns indices, quantized values,
-    integer level codes, errors (original - quantized), and step size.
-    """
     indices, samples = signal
     if not isinstance(levels, int) or isinstance(levels, bool) or levels < 2:
         raise ValueError("Number of quantization levels must be an integer of at least 2.")
